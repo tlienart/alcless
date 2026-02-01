@@ -16,15 +16,15 @@ import (
 
 func New() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                   "create [INSTANCE]",
+		Use:                   "create [INSTANCE]...",
 		Short:                 "Create an instance",
-		Args:                  cobra.MaximumNArgs(1),
+		Args:                  cobra.ArbitraryArgs,
 		RunE:                  action,
 		DisableFlagsInUseLine: true,
 	}
 	flags := cmd.Flags()
-	flags.SetInterspersed(false)
 	flags.String("name", "", "Override the instance name")
+	flags.String("user-password", "", "User password (default: interactive if TTY, random if not TTY)")
 
 	return cmd
 }
@@ -70,46 +70,65 @@ func action(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	var args0 string
-	if len(args) > 0 {
-		args0 = args[0]
-	}
-	instName, err := resolveInstName(args0, flagName)
-	if err != nil {
-		return err
-	}
-	if err = store.ValidateName(instName); err != nil {
-		return err
-	}
-	instUser := userutil.UserFromInstance(instName)
-	instUserExists, err := userutil.Exists(instUser)
-	if err != nil {
-		return err
-	}
-	if instUserExists {
-		slog.InfoContext(ctx, "Already exists", "instance", instName, "instUser", instUser)
-	} else {
-		slog.InfoContext(ctx, "Creating an instance", "instance", instName, "instUser", instUser)
-		cmds, err := userutil.AddUserCmds(ctx, instUser, flagTty)
+	var instPassword *string
+	if flags.Changed("user-password") {
+		s, err := flags.GetString("user-password")
 		if err != nil {
 			return err
 		}
-		if err := cmdutil.RunWithCobra(ctx, cmds, cmd); err != nil {
+		instPassword = &s
+	}
+
+	instNames := []string{""}
+	if len(args) > 0 {
+		instNames = args
+	}
+	if len(instNames) > 1 && flagName != "" {
+		return errors.New("flag --name cannot be used with multiple instances")
+	}
+
+	if err := cmdutil.SudoV(ctx); err != nil {
+		slog.WarnContext(ctx, "failed to run sudo -v", "error", err)
+	}
+
+	for _, args0 := range instNames {
+		instName, err := resolveInstName(args0, flagName)
+		if err != nil {
 			return err
 		}
-	}
-	if !flagPlain {
-		if err = brew.Installed(ctx, instUser); err == nil {
-			slog.InfoContext(ctx, "Homebrew is already installed", "instance", instName, "instUser", instUser)
+		if err = store.ValidateName(instName); err != nil {
+			return err
+		}
+		instUser := userutil.UserFromInstance(instName)
+		instUserExists, err := userutil.Exists(instUser)
+		if err != nil {
+			return err
+		}
+		if instUserExists {
+			slog.InfoContext(ctx, "Already exists", "instance", instName, "instUser", instUser)
 		} else {
-			slog.DebugContext(ctx, "Homebrew is not installed", "instance", instName, "instUser", instUser, "error", err)
-			slog.InfoContext(ctx, "Installing Homebrew (If you are seeing an error, do NOT report it to the upstream Homebrew)", "instance", instName, "instUser", instUser)
-			cmds := brew.InstallCmds(ctx, instUser)
-			if err = cmdutil.RunWithCobra(ctx, cmds, cmd); err != nil {
+			slog.InfoContext(ctx, "Creating an instance", "instance", instName, "instUser", instUser)
+			cmds, err := userutil.AddUserCmds(ctx, instUser, flagTty, instPassword)
+			if err != nil {
 				return err
 			}
-			if err = brew.Installed(ctx, instUser); err != nil {
-				return fmt.Errorf("failed to detect Homebrew: %w", err)
+			if err := cmdutil.RunWithCobra(ctx, cmds, cmd); err != nil {
+				return err
+			}
+		}
+		if !flagPlain {
+			if err = brew.Installed(ctx, instUser); err == nil {
+				slog.InfoContext(ctx, "Homebrew is already installed", "instance", instName, "instUser", instUser)
+			} else {
+				slog.DebugContext(ctx, "Homebrew is not installed", "instance", instName, "instUser", instUser, "error", err)
+				slog.InfoContext(ctx, "Installing Homebrew (If you are seeing an error, do NOT report it to the upstream Homebrew)", "instance", instName, "instUser", instUser)
+				cmds := brew.InstallCmds(ctx, instUser)
+				if err = cmdutil.RunWithCobra(ctx, cmds, cmd); err != nil {
+					return err
+				}
+				if err = brew.Installed(ctx, instUser); err != nil {
+					return fmt.Errorf("failed to detect Homebrew: %w", err)
+				}
 			}
 		}
 	}
