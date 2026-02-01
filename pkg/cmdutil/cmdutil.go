@@ -94,3 +94,12 @@ func RunWithCobra(ctx context.Context, cmds []*exec.Cmd, cobraCmd *cobra.Command
 	}
 	return Run(ctx, cmds, opts)
 }
+
+func SudoV(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "sudo", "-v")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	slog.DebugContext(ctx, "Running sudo -v to cache credentials")
+	return cmd.Run()
+}

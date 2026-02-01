@@ -12,10 +12,10 @@ import (
 
 func New() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                   "delete INSTANCE",
+		Use:                   "delete INSTANCE...",
 		Aliases:               []string{"remove", "rm"},
 		Short:                 "Delete an instance",
-		Args:                  cobra.ExactArgs(1),
+		Args:                  cobra.MinimumNArgs(1),
 		RunE:                  action,
 		DisableFlagsInUseLine: true,
 	}
@@ -24,19 +24,29 @@ func New() *cobra.Command {
 
 func action(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
-	instName := args[0]
-	if err := store.ValidateName(instName); err != nil {
-		return err
+	if err := cmdutil.SudoV(ctx); err != nil {
+		slog.WarnContext(ctx, "failed to run sudo -v", "error", err)
 	}
-	instUser := userutil.UserFromInstance(instName)
-	instUserExists, err := userutil.Exists(instUser)
-	if err != nil {
-		return err
+	for _, instName := range args {
+		if err := store.ValidateName(instName); err != nil {
+			return err
+		}
+		instUser := userutil.UserFromInstance(instName)
+		instUserExists, err := userutil.Exists(instUser)
+		if err != nil {
+			return err
+		}
+		if !instUserExists {
+			slog.WarnContext(ctx, "No such instance", "instance", instName, "instUser", instUser)
+			continue
+		}
+		cmds, err := userutil.DeleteUserCmds(ctx, instUser)
+		if err != nil {
+			return err
+		}
+		if err := cmdutil.RunWithCobra(ctx, cmds, cmd); err != nil {
+			return err
+		}
 	}
-	if !instUserExists {
-		slog.WarnContext(ctx, "No such instance", "instance", instName, "instUser", instUser)
-		return nil
-	}
-	cmds, err := userutil.DeleteUserCmds(ctx, instUser)
-	return cmdutil.RunWithCobra(ctx, cmds, cmd)
+	return nil
 }

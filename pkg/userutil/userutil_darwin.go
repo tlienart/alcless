@@ -53,7 +53,7 @@ func ReadAttribute(ctx context.Context, username string, k Attribute) (string, e
 	return s, nil
 }
 
-func AddUserCmds(ctx context.Context, instUser string, tty bool) ([]*exec.Cmd, error) {
+func AddUserCmds(ctx context.Context, instUser string, tty bool, instPassword *string) ([]*exec.Cmd, error) {
 	sudoersContent, err := sudo.Sudoers(instUser)
 	if err != nil {
 		return nil, err
@@ -64,8 +64,11 @@ func AddUserCmds(ctx context.Context, instUser string, tty bool) ([]*exec.Cmd, e
 	}
 	sudoersCmd := fmt.Sprintf("echo '%s' >'%s'", sudoersContent, sudoersPath)
 	pw := "-"
-	if !tty {
-		pw, err := password.Generate(64, 10, 10, false, false)
+	if instPassword != nil {
+		pw = *instPassword
+	} else if !tty {
+		var err error
+		pw, err = password.Generate(64, 10, 10, false, false)
 		if err != nil {
 			return nil, err
 		}
